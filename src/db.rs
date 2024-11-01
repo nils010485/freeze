@@ -126,10 +126,11 @@ impl Database {
 
     pub fn clear_snapshots<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        self.conn.execute(
+        let r = self.conn.execute(
             "DELETE FROM snapshots WHERE path = ?",
             params![path_str],
         )?;
+        println!("{} snapshot affected", r.to_string());
         Ok(())
     }
 
