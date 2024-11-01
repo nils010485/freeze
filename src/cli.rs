@@ -1,3 +1,4 @@
+// cli.rs
 use clap::{Parser, Subcommand};
 use anyhow::Result;
 use crate::db::Database;

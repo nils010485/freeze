@@ -1,3 +1,4 @@
+// main.rs
 pub mod cli;
 pub mod db;
 pub mod snapshot;

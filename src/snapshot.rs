@@ -1,3 +1,4 @@
+// snapshot.rs
 use crate::db::Database;
 use anyhow::Result;
 use chrono::Local;
@@ -15,7 +16,6 @@ pub struct Snapshot {
     pub(crate) date: String,
     pub(crate) size: i64,
 }
-
 impl Snapshot {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref().canonicalize()?;
@@ -37,7 +37,7 @@ impl Snapshot {
 
     pub fn save_recursive<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
         let path = path.as_ref();
-        
+
         if path.is_file() {
             return Self::save_file(path, db);
         }
@@ -67,7 +67,72 @@ impl Snapshot {
         Ok(())
     }
 
+    pub fn restore<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
+        let path = path.as_ref();
 
+        // Si c'est un fichier, utiliser la restauration simple
+        if path.is_file() {
+            return Self::restore_single(path, db);
+        }
+
+        // Pour un dossier, restauration récursive
+        let pb = ProgressBar::new_spinner();
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.green} [{elapsed_precise}] {msg}")?
+        );
+
+        // Récupérer tous les snapshots qui commencent par le chemin du dossier
+        let all_snapshots = db.list_directory_snapshots(path)?;
+        if all_snapshots.is_empty() {
+            anyhow::bail!("No snapshots found for directory: {}", path.display());
+        }
+
+        for (file_path, _, _, _) in all_snapshots {
+            pb.set_message(format!("Restoring {}", file_path.display()));
+            Self::restore_single(&file_path, db)?;
+        }
+
+        pb.finish_with_message("Directory restore completed!");
+        Ok(())
+    }
+
+    fn restore_single<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
+        let path = path.as_ref();
+        let snapshots = db.get_snapshots_for_path(path)?;
+
+        if snapshots.is_empty() {
+            anyhow::bail!("No snapshots found for {}", path.display());
+        }
+
+        if snapshots.len() == 1 {
+            return Self::restore_snapshot(&snapshots[0], path);
+        }
+
+        println!("\nAvailable snapshots for {}:", path.display());
+        for (i, snapshot) in snapshots.iter().enumerate() {
+            println!("{}. {} ({}) - Checksum: {}",
+                     i + 1,
+                     snapshot.date,
+                     crate::utils::format_size(snapshot.size),
+                     &snapshot.checksum[..8]
+            );
+        }
+
+        let mut input = String::new();
+        print!("\nSelect snapshot number (1-{}): ", snapshots.len());
+        std::io::stdout().flush()?;
+        std::io::stdin().read_line(&mut input)?;
+
+        let selection = input.trim().parse::<usize>()
+            .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+
+        if selection < 1 || selection > snapshots.len() {
+            anyhow::bail!("Invalid selection: {}", selection);
+        }
+
+        Self::restore_snapshot(&snapshots[selection - 1], path)
+    }
 
     fn restore_snapshot(snapshot: &Snapshot, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
@@ -76,83 +141,42 @@ impl Snapshot {
         fs::write(path, &snapshot.content)?;
         Ok(())
     }
-    // Dans snapshot.rs, mettre à jour la méthode restore
-pub fn restore<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
-    let path = path.as_ref();
-    let snapshots = db.get_snapshots_for_path(path)?;
 
-    if snapshots.is_empty() {
-        anyhow::bail!("No snapshots found for {}", path.display());
-    }
+    fn is_excluded(path: &Path) -> bool {
+        let db = match Database::new() {
+            Ok(db) => db,
+            Err(_) => return false,
+        };
 
-    if snapshots.len() == 1 {
-        return Self::restore_snapshot(&snapshots[0], path);
-    }
+        let exclusions = match db.get_exclusions() {
+            Ok(excl) => excl,
+            Err(_) => return false,
+        };
 
-    println!("\nAvailable snapshots for {}:", path.display());
-    for (i, snapshot) in snapshots.iter().enumerate() {
-        println!("{}. {} ({}) - Checksum: {}",
-            i + 1,
-            snapshot.date,
-            crate::utils::format_size(snapshot.size),
-            &snapshot.checksum[..8]
-        );
-    }
-
-    let mut input = String::new();
-    print!("\nSelect snapshot number (1-{}): ", snapshots.len());
-    std::io::stdout().flush()?;
-    std::io::stdin().read_line(&mut input)?;
-
-    let selection = input.trim().parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
-
-    if selection < 1 || selection > snapshots.len() {
-        anyhow::bail!("Invalid selection: {}", selection);
-    }
-
-    Self::restore_snapshot(&snapshots[selection - 1], path)
-}
-
-
-    // Dans la méthode is_excluded de snapshot.rs
-fn is_excluded(path: &Path) -> bool {
-    let db = match Database::new() {
-        Ok(db) => db,
-        Err(_) => return false,
-    };
-
-    let exclusions = match db.get_exclusions() {
-        Ok(excl) => excl,
-        Err(_) => return false,
-    };
-
-    for (pattern, exc_type) in exclusions {
-        match exc_type.as_str() {
-            "directory" => {
-                if path.is_dir() && path.to_string_lossy().contains(&pattern) {
-                    return true;
-                }
-            },
-            "extension" => {
-                if let Some(ext) = path.extension() {
-                    if ext.to_string_lossy() == pattern.trim_start_matches('.') {
+        for (pattern, exc_type) in exclusions {
+            match exc_type.as_str() {
+                "directory" => {
+                    if path.is_dir() && path.to_string_lossy().contains(&pattern) {
                         return true;
                     }
-                }
-            },
-            "file" => {
-                if let Some(file_name) = path.file_name() {
-                    if file_name.to_string_lossy() == pattern {
-                        return true;
+                },
+                "extension" => {
+                    if let Some(ext) = path.extension() {
+                        if ext.to_string_lossy() == pattern.trim_start_matches('.') {
+                            return true;
+                        }
                     }
-                }
-            },
-            _ => continue,
+                },
+                "file" => {
+                    if let Some(file_name) = path.file_name() {
+                        if file_name.to_string_lossy() == pattern {
+                            return true;
+                        }
+                    }
+                },
+                _ => continue,
+            }
         }
+        false
     }
-    false
 }
-
-}
-
