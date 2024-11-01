@@ -37,6 +37,11 @@ pub enum Commands {
         all: bool,
         path: Option<String>,
     },
+    /// Search snapshots by name
+    Search {
+        /// Name pattern to search
+        pattern: String,
+    },
     /// Manage exclusions
     Exclusion {
         #[command(subcommand)]
@@ -169,17 +174,52 @@ pub fn run() -> Result<()> {
                 println!("{}", style("Clearing all snapshots...").yellow());
                 db.clear_all_snapshots()?;
                 println!("{}", style("All snapshots cleared!").green());
-            } else if let Some(path) = path {
+            } else {
+                let path = path.unwrap_or_else(|| String::from("./"));
                 let path = PathBuf::from(path);
-                println!("{} {}",
-                         style("Clearing snapshots for:").yellow(),
-                         style(path.display()).green()
-                );
-                db.clear_snapshots(path)?;
-                println!("{}", style("Snapshots cleared!").green());
+
+                if path.to_string_lossy() == "./" {
+                    println!("{}",
+                             style("Clearing snapshots in current directory...").yellow()
+                    );
+                    db.clear_directory_snapshots(&env::current_dir()?)?;
+                } else {
+                    println!("{} {}",
+                             style("Clearing snapshots for:").yellow(),
+                             style(path.display()).green()
+                    );
+                    db.clear_snapshots(path)?;
+                }
             }
             Ok(())
-        }
+        },
+
+        Commands::Search { pattern } => {
+            let snapshots = db.search_snapshots(&pattern)?;
+            if snapshots.is_empty() {
+                println!("{} {}",
+                         style("No snapshots found matching:").yellow(),
+                         style(&pattern).cyan()
+                );
+                return Ok(());
+            }
+
+            println!("{} {}",
+                     style("Snapshots matching:").cyan().bold(),
+                     style(&pattern).green()
+            );
+
+            for (path, date, size, checksum) in snapshots {
+                println!("\n{}", style("→").cyan());
+                utils::print_snapshot_info(
+                    &path,
+                    &date,
+                    size,
+                    &checksum
+                );
+            }
+            Ok(())
+        },
 
         Commands::Exclusion { action } => {
             match action {

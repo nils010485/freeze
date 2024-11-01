@@ -10,6 +10,51 @@ pub struct Database {
 }
 
 impl Database {
+
+    pub fn clear_directory_snapshots<P: AsRef<Path>>(&self, dir: P) -> Result<()> {
+        let dir_pattern = format!("{}/%", dir.as_ref().to_string_lossy());
+        let dir_path = dir.as_ref().to_string_lossy().to_string();
+
+        let count = self.conn.execute(
+            "DELETE FROM snapshots WHERE path LIKE ? OR path = ?",
+            params![dir_pattern, dir_path],
+        )?;
+
+        if count == 0 {
+            println!("{}", style("No snapshots found in this directory.").yellow());
+        } else {
+            println!("{} {} {}",
+                     style("Cleared").green(),
+                     style(count).cyan(),
+                     style(if count == 1 { "snapshot" } else { "snapshots" }).green()
+            );
+        }
+        Ok(())
+    }
+    pub fn search_snapshots(&self, pattern: &str) -> Result<Vec<(PathBuf, String, i64, String)>> {
+        let search_pattern = format!("%{}%", pattern);
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT path, date, size, checksum
+             FROM snapshots
+             WHERE path LIKE ?
+             ORDER BY date DESC"
+        )?;
+
+        let snapshot_iter = stmt.query_map(params![search_pattern], |row| {
+            Ok((
+                PathBuf::from(row.get::<_, String>(0)?),
+                row.get::<_, String>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        })?;
+
+        let mut snapshots = Vec::new();
+        for snapshot in snapshot_iter {
+            snapshots.push(snapshot?);
+        }
+        Ok(snapshots)
+    }
     pub fn list_directory_snapshots<P: AsRef<Path>>(&self, dir: P) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let dir_pattern = format!("{}/%", dir.as_ref().to_string_lossy());
         let mut stmt = self.conn.prepare(
