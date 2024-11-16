@@ -1,9 +1,10 @@
 // cli.rs
-use clap::{Parser, Subcommand};
-use anyhow::Result;
 use crate::db::Database;
 use crate::snapshot::Snapshot;
 use crate::utils;
+use crate::utils::print_header;
+use anyhow::Result;
+use clap::{Parser, Subcommand};
 use console::style;
 use std::env;
 use std::path::PathBuf;
@@ -91,12 +92,14 @@ pub fn run() -> Result<()> {
 
     match cli.command {
         Commands::Save { path } => {
-            let path = PathBuf::from(path).canonicalize()?;  // Convertit en chemin absolu
+            print_header("🧊 Freezing File/Directory");
+            let path = PathBuf::from(path).canonicalize()?; // Convertit en chemin absolu
             utils::validate_path(&path)?;
 
-            println!("{} {}",
-                     style("Saving:").cyan().bold(),
-                     style(path.display()).green()
+            println!(
+                "{} {}",
+                style("Freezing:").cyan().bold(),
+                style(path.display()).green()
             );
 
             let pb = utils::create_progress_bar(1);
@@ -109,18 +112,25 @@ pub fn run() -> Result<()> {
         }
 
         Commands::Restore { path } => {
-            let path = PathBuf::from(path).canonicalize()?;  // Convertit en chemin absolu
-            println!("{} {}",
-                     style("Restoring:").cyan().bold(),
-                     style(path.display()).green()
+            print_header("♻️  Restoring From Snapshot");
+            let path = PathBuf::from(path).canonicalize()?; // Convertit en chemin absolu
+            println!(
+                "{} {}",
+                style("Restoring:").cyan().bold(),
+                style(path.display()).green()
             );
 
             Snapshot::restore(&path, &db)?;
-            println!("{}", style("Restore completed successfully!").green().bold());
+            println!(
+                "{}",
+                style("Restore completed successfully!").green().bold()
+            );
             Ok(())
         }
 
         Commands::Ls => {
+            print_header("📋 All Snapshots");
+
             let snapshots = db.list_all_snapshots()?;
             if snapshots.is_empty() {
                 println!("{}", style("No snapshots found.").yellow());
@@ -128,14 +138,10 @@ pub fn run() -> Result<()> {
             }
 
             println!("{}", style("All snapshots:").cyan().bold());
-            for (path, date, size, checksum) in snapshots {  // Ajout du checksum
+            for (path, date, size, checksum) in snapshots {
+                // Ajout du checksum
                 println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(
-                    &path,
-                    &date,
-                    size,
-                    &checksum
-                );
+                utils::print_snapshot_info(&path, &date, size, &checksum);
             }
             Ok(())
         }
@@ -145,26 +151,23 @@ pub fn run() -> Result<()> {
             let snapshots = db.list_current_directory_snapshots(&current_dir)?;
 
             if snapshots.is_empty() {
-                println!("{}",
-                         style(format!("No snapshots found in {}.", current_dir.display()))
-                             .yellow()
+                println!(
+                    "{}",
+                    style(format!("No snapshots found in {}.", current_dir.display())).yellow()
                 );
                 return Ok(());
             }
 
-            println!("{} {}",
-                     style("Snapshots in current directory:").cyan().bold(),
-                     style(current_dir.display()).green()
+            println!(
+                "{} {}",
+                style("Snapshots in current directory:").cyan().bold(),
+                style(current_dir.display()).green()
             );
 
-            for (path, date, size, checksum) in snapshots {  // Ajout du checksum
+            for (path, date, size, checksum) in snapshots {
+                // Ajout du checksum
                 println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(
-                    &path,
-                    &date,
-                    size,
-                    &checksum
-                );
+                utils::print_snapshot_info(&path, &date, size, &checksum);
             }
             Ok(())
         }
@@ -179,63 +182,67 @@ pub fn run() -> Result<()> {
                 let path = PathBuf::from(path);
 
                 if path.to_string_lossy() == "./" {
-                    println!("{}",
-                             style("Clearing snapshots in current directory...").yellow()
+                    println!(
+                        "{}",
+                        style("Clearing snapshots in current directory...").yellow()
                     );
                     db.clear_directory_snapshots(&env::current_dir()?)?;
                 } else {
-                    println!("{} {}",
-                             style("Clearing snapshots for:").yellow(),
-                             style(path.display()).green()
+                    println!(
+                        "{} {}",
+                        style("Clearing snapshots for:").yellow(),
+                        style(path.display()).green()
                     );
                     db.clear_snapshots(path)?;
                 }
             }
             Ok(())
-        },
+        }
 
         Commands::Search { pattern } => {
             let snapshots = db.search_snapshots(&pattern)?;
             if snapshots.is_empty() {
-                println!("{} {}",
-                         style("No snapshots found matching:").yellow(),
-                         style(&pattern).cyan()
+                println!(
+                    "{} {}",
+                    style("No snapshots found matching:").yellow(),
+                    style(&pattern).cyan()
                 );
                 return Ok(());
             }
 
-            println!("{} {}",
-                     style("Snapshots matching:").cyan().bold(),
-                     style(&pattern).green()
+            println!(
+                "{} {}",
+                style("Snapshots matching:").cyan().bold(),
+                style(&pattern).green()
             );
 
             for (path, date, size, checksum) in snapshots {
                 println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(
-                    &path,
-                    &date,
-                    size,
-                    &checksum
-                );
+                utils::print_snapshot_info(&path, &date, size, &checksum);
             }
             Ok(())
-        },
+        }
 
         Commands::Exclusion { action } => {
             match action {
-                ExclusionCommands::Add { pattern, exclusion_type } => {
+                ExclusionCommands::Add {
+                    pattern,
+                    exclusion_type,
+                } => {
                     db.add_exclusion(&pattern, exclusion_type.as_str())?;
-                    println!("{} {} ({})",
-                             style("Added exclusion:").green(),
-                             style(&pattern).yellow(),
-                             style(exclusion_type.as_str()).cyan()
+                    println!(
+                        "{} {} ({})",
+                        style("Added exclusion:").green(),
+                        style(&pattern).yellow(),
+                        style(exclusion_type.as_str()).cyan()
                     );
                 }
                 ExclusionCommands::Remove { pattern } => {
                     db.remove_exclusion(&pattern)?;
-                    println!("{} {}",
-                             style("Removed exclusion:").green(),
-                             style(&pattern).yellow()
+                    println!(
+                        "{} {}",
+                        style("Removed exclusion:").green(),
+                        style(&pattern).yellow()
                     );
                 }
                 ExclusionCommands::List => {
@@ -247,10 +254,11 @@ pub fn run() -> Result<()> {
 
                     println!("{}", style("Current exclusions:").cyan().bold());
                     for (pattern, exc_type) in exclusions {
-                        println!("{} {} ({})",
-                                 style("→").cyan(),
-                                 style(pattern).yellow(),
-                                 style(exc_type).green()
+                        println!(
+                            "{} {} ({})",
+                            style("→").cyan(),
+                            style(pattern).yellow(),
+                            style(exc_type).green()
                         );
                     }
                 }
