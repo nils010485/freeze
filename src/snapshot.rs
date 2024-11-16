@@ -3,7 +3,7 @@ use crate::db::Database;
 use anyhow::Result;
 use chrono::Local;
 use indicatif::{ProgressBar, ProgressStyle};
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -45,7 +45,7 @@ impl Snapshot {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] {msg}")?
+                .template("{spinner:.green} [{elapsed_precise}] {msg}")?,
         );
 
         let walker = WalkDir::new(path).into_iter();
@@ -79,7 +79,7 @@ impl Snapshot {
         let pb = ProgressBar::new_spinner();
         pb.set_style(
             ProgressStyle::default_spinner()
-                .template("{spinner:.green} [{elapsed_precise}] {msg}")?
+                .template("{spinner:.green} [{elapsed_precise}] {msg}")?,
         );
 
         // Récupérer tous les snapshots qui commencent par le chemin du dossier
@@ -111,11 +111,12 @@ impl Snapshot {
 
         println!("\nAvailable snapshots for {}:", path.display());
         for (i, snapshot) in snapshots.iter().enumerate() {
-            println!("{}. {} ({}) - Checksum: {}",
-                     i + 1,
-                     snapshot.date,
-                     crate::utils::format_size(snapshot.size),
-                     &snapshot.checksum[..8]
+            println!(
+                "{}. {} ({}) - Checksum: {}",
+                i + 1,
+                snapshot.date,
+                crate::utils::format_size(snapshot.size),
+                &snapshot.checksum[..8]
             );
         }
 
@@ -124,7 +125,9 @@ impl Snapshot {
         std::io::stdout().flush()?;
         std::io::stdin().read_line(&mut input)?;
 
-        let selection = input.trim().parse::<usize>()
+        let selection = input
+            .trim()
+            .parse::<usize>()
             .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
 
         if selection < 1 || selection > snapshots.len() {
@@ -142,7 +145,7 @@ impl Snapshot {
         Ok(())
     }
 
-    fn is_excluded(path: &Path) -> bool {
+    pub fn is_excluded(path: &Path) -> bool {
         let db = match Database::new() {
             Ok(db) => db,
             Err(_) => return false,
@@ -159,21 +162,21 @@ impl Snapshot {
                     if path.is_dir() && path.to_string_lossy().contains(&pattern) {
                         return true;
                     }
-                },
+                }
                 "extension" => {
                     if let Some(ext) = path.extension() {
                         if ext.to_string_lossy() == pattern.trim_start_matches('.') {
                             return true;
                         }
                     }
-                },
+                }
                 "file" => {
                     if let Some(file_name) = path.file_name() {
                         if file_name.to_string_lossy() == pattern {
                             return true;
                         }
                     }
-                },
+                }
                 _ => continue,
             }
         }

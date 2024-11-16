@@ -2,6 +2,7 @@
 use crate::db::Database;
 use crate::snapshot::Snapshot;
 use crate::utils;
+use crate::utils::check_path;
 use crate::utils::print_header;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -48,6 +49,11 @@ pub enum Commands {
         #[command(subcommand)]
         action: ExclusionCommands,
     },
+    /// Check if current version is already saved
+    Check {
+        /// Path to check
+        path: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -91,6 +97,11 @@ pub fn run() -> Result<()> {
     let db = Database::new()?;
 
     match cli.command {
+        Commands::Check { path } => {
+            print_header("🔍 Checking Files");
+            check_path(&path, &db)?;
+            Ok(())
+        }
         Commands::Save { path } => {
             print_header("🧊 Freezing File/Directory");
             let path = PathBuf::from(path).canonicalize()?; // Convertit en chemin absolu
