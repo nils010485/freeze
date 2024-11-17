@@ -148,12 +148,7 @@ pub fn run() -> Result<()> {
                 return Ok(());
             }
 
-            println!("{}", style("All snapshots:").cyan().bold());
-            for (path, date, size, checksum) in snapshots {
-                // Ajout du checksum
-                println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(&path, &date, size, &checksum);
-            }
+            utils::print_snapshot_info(&snapshots);
             Ok(())
         }
 
@@ -175,11 +170,7 @@ pub fn run() -> Result<()> {
                 style(current_dir.display()).green()
             );
 
-            for (path, date, size, checksum) in snapshots {
-                // Ajout du checksum
-                println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(&path, &date, size, &checksum);
-            }
+            utils::print_snapshot_info(&snapshots);
             Ok(())
         }
 
@@ -227,10 +218,7 @@ pub fn run() -> Result<()> {
                 style(&pattern).green()
             );
 
-            for (path, date, size, checksum) in snapshots {
-                println!("\n{}", style("→").cyan());
-                utils::print_snapshot_info(&path, &date, size, &checksum);
-            }
+            utils::print_snapshot_info(&snapshots);
             Ok(())
         }
 
@@ -278,3 +266,4 @@ pub fn run() -> Result<()> {
         }
     }
 }
+

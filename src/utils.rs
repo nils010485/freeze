@@ -33,18 +33,24 @@ pub fn print_header(text: &str) {
     println!("{}\n", "═".repeat(width).bright_blue());
 }
 
-pub fn print_snapshot_info(path: &Path, date: &str, size: i64, checksum: &str) {
-    let snapshot = SnapshotDisplay {
-        path: path.display().to_string(),
-        date: date.to_string(),
-        size: format_size(size),
-        checksum: checksum[..8].to_string(),
-    };
+pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
+    let snapshot_displays: Vec<SnapshotDisplay> = snapshots
+        .iter()
+        .map(|(path, date, size, checksum)| SnapshotDisplay {
+            path: path.display().to_string(),
+            date: date.to_string(),
+            size: format_size(*size),
+            checksum: checksum[..8].to_string(),
+        })
+        .collect();
 
-    let table = Table::new(vec![snapshot]).with(Style::modern()).to_string();
+    let table = Table::new(snapshot_displays)
+        .with(Style::modern())
+        .to_string();
 
     println!("{}", table);
 }
+
 
 pub fn create_progress_bar(len: u64) -> ProgressBar {
     let pb = ProgressBar::new(len);
