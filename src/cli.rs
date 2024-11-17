@@ -11,6 +11,7 @@ use std::{env, fs};
 use std::path::PathBuf;
 use std::io::Write;
 use crate::utils::{format_size, is_binary};
+use std::path::Path;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -378,9 +379,15 @@ pub fn run() -> Result<()> {
                 println!("{}", style("All snapshots cleared!").green());
             } else {
                 let path = path.unwrap_or_else(|| String::from("./"));
-                let path = PathBuf::from(path);
 
-                if path.to_string_lossy() == "./" {
+                // Convertir en chemin absolu, en utilisant le répertoire courant comme base si nécessaire
+                let path = if Path::new(&path).is_absolute() {
+                    PathBuf::from(&path)
+                } else {
+                    env::current_dir()?.join(&path).canonicalize()?
+                };
+
+                if path.to_string_lossy() == env::current_dir()?.to_string_lossy() {
                     println!(
                         "{}",
                         style("Clearing snapshots in current directory...").yellow()
