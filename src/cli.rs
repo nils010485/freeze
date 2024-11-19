@@ -9,7 +9,6 @@ use clap::{Parser, Subcommand};
 use console::style;
 use std::{env, fs};
 use std::path::PathBuf;
-use std::io::Write;
 use crate::utils::{format_size, is_binary};
 use std::path::Path;
 
