@@ -7,6 +7,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tabled::settings::Style;
@@ -23,6 +24,44 @@ struct SnapshotDisplay {
     #[tabled(rename = "🔐 Checksum")]
     checksum: String,
 }
+
+pub fn select_snapshot(snapshots: &[Snapshot]) -> Result<&Snapshot> {
+    if snapshots.is_empty() {
+        anyhow::bail!("No snapshots available");
+    }
+
+    if snapshots.len() == 1 {
+        return Ok(&snapshots[0]);
+    }
+
+    println!("\nAvailable snapshots:");
+    for (i, snapshot) in snapshots.iter().enumerate() {
+        println!(
+            "{}. {} ({}) - Checksum: {}",
+            i + 1,
+            snapshot.date,
+            format_size(snapshot.size),
+            &snapshot.checksum[..8]
+        );
+    }
+
+    let mut input = String::new();
+    print!("\nSelect snapshot number (1-{}): ", snapshots.len());
+    std::io::stdout().flush()?;
+    std::io::stdin().read_line(&mut input)?;
+
+    let selection = input
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
+
+    if selection < 1 || selection > snapshots.len() {
+        anyhow::bail!("Invalid selection: {}", selection);
+    }
+
+    Ok(&snapshots[selection - 1])
+}
+
 
 pub fn print_header(text: &str) {
     let term = Term::stdout();
@@ -85,7 +124,7 @@ pub fn is_binary(content: &[u8]) -> bool {
     content.iter().take(512).any(|&byte| byte == 0)
 }
 
-pub fn validate_path<P: AsRef<Path>>(path: P) -> anyhow::Result<()> {
+pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
     if !path.exists() {
         anyhow::bail!("Path does not exist: {}", path.display());
@@ -144,8 +183,7 @@ fn check_directory(dir: &Path, db: &Database) -> Result<()> {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
         ProgressStyle::default_spinner()
-            .template("{spinner:.green} [{elapsed_precise}] {msg}")
-            .unwrap(),
+            .template("{spinner:.green} [{elapsed_precise}] {msg}")?,
     );
 
     let all_snapshots = db.list_directory_snapshots(dir)?;

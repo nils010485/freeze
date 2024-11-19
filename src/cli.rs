@@ -132,36 +132,8 @@ pub fn run() -> Result<()> {
             }
 
             // If multiple snapshots, let user choose
-            let snapshot = if snapshots.len() > 1 {
-                println!("\nAvailable snapshots:");
-                for (i, snapshot) in snapshots.iter().enumerate() {
-                    println!(
-                        "{}. {} ({}) - Checksum: {}",
-                        i + 1,
-                        snapshot.date,
-                        format_size(snapshot.size),
-                        &snapshot.checksum[..8]
-                    );
-                }
+            let snapshot = utils::select_snapshot(&snapshots)?;
 
-                let mut input = String::new();
-                print!("\nSelect snapshot number (1-{}): ", snapshots.len());
-                std::io::stdout().flush()?;
-                std::io::stdin().read_line(&mut input)?;
-
-                let selection = input
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
-
-                if selection < 1 || selection > snapshots.len() {
-                    anyhow::bail!("Invalid selection: {}", selection);
-                }
-
-                &snapshots[selection - 1]
-            } else {
-                &snapshots[0]
-            };
 
             // Determine export destination
             // Determine export destination
@@ -232,36 +204,8 @@ pub fn run() -> Result<()> {
             }
 
             // If multiple snapshots, let user choose
-            let snapshot = if snapshots.len() > 1 {
-                println!("\nAvailable snapshots:");
-                for (i, snapshot) in snapshots.iter().enumerate() {
-                    println!(
-                        "{}. {} ({}) - Checksum: {}",
-                        i + 1,
-                        snapshot.date,
-                        format_size(snapshot.size),
-                        &snapshot.checksum[..8]
-                    );
-                }
+            let snapshot = utils::select_snapshot(&snapshots)?;
 
-                let mut input = String::new();
-                print!("\nSelect snapshot number (1-{}): ", snapshots.len());
-                std::io::stdout().flush()?;
-                std::io::stdin().read_line(&mut input)?;
-
-                let selection = input
-                    .trim()
-                    .parse::<usize>()
-                    .map_err(|_| anyhow::anyhow!("Invalid selection"))?;
-
-                if selection < 1 || selection > snapshots.len() {
-                    anyhow::bail!("Invalid selection: {}", selection);
-                }
-
-                &snapshots[selection - 1]
-            } else {
-                &snapshots[0]
-            };
 
             // Check if content is binary
             if is_binary(&snapshot.content) {
