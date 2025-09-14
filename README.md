@@ -18,7 +18,7 @@
 ## 🚀 Installation
 
 ```bash
-cargo install freeze
+cargo install --path .
 ```
 
 ## 🎮 Usage
