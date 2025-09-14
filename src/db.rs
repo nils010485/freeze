@@ -1,16 +1,16 @@
 // db.rs
 use crate::snapshot::Snapshot;
 use anyhow::Result;
-use rusqlite::{Connection, params};
-use std::path::{Path, PathBuf};
 use console::style;
+use rusqlite::{params, Connection};
+use std::fs;
+use std::path::{Path, PathBuf};
 
 pub struct Database {
     conn: Connection,
 }
 
 impl Database {
-
     pub fn clear_directory_snapshots<P: AsRef<Path>>(&self, dir: P) -> Result<()> {
         let dir_pattern = format!("{}/%", dir.as_ref().to_string_lossy());
         let dir_path = dir.as_ref().to_string_lossy().to_string();
@@ -21,13 +21,40 @@ impl Database {
         )?;
 
         if count == 0 {
-            println!("{}", style("No snapshots found in this directory.").yellow());
-        } else {
-            println!("{} {} {}",
-                     style("Cleared").green(),
-                     style(count).cyan(),
-                     style(if count == 1 { "snapshot" } else { "snapshots" }).green()
+            println!(
+                "{}",
+                style("No snapshots found in this directory.").yellow()
             );
+        } else {
+            self.cleanup_orphaned_files()?;
+            println!(
+                "{} {} {}",
+                style("Cleared").green(),
+                style(count).cyan(),
+                style(if count == 1 { "snapshot" } else { "snapshots" }).green()
+            );
+        }
+        Ok(())
+    }
+    fn cleanup_orphaned_files(&self) -> Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT content_path FROM snapshots GROUP BY content_path")?;
+
+        let used_files: Vec<String> = stmt
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<_, _>>()?;
+
+        let storage_dir = dirs::home_dir()
+            .expect("Home directory")
+            .join(".freeze/storage");
+
+        for entry in fs::read_dir(storage_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !used_files.contains(&path.to_string_lossy().to_string()) {
+                fs::remove_file(path)?;
+            }
         }
         Ok(())
     }
@@ -37,7 +64,7 @@ impl Database {
             "SELECT DISTINCT path, date, size, checksum
              FROM snapshots
              WHERE path LIKE ?
-             ORDER BY date DESC"
+             ORDER BY date DESC",
         )?;
 
         let snapshot_iter = stmt.query_map(params![search_pattern], |row| {
@@ -55,12 +82,15 @@ impl Database {
         }
         Ok(snapshots)
     }
-    pub fn list_directory_snapshots<P: AsRef<Path>>(&self, dir: P) -> Result<Vec<(PathBuf, String, i64, String)>> {
+    pub fn list_directory_snapshots<P: AsRef<Path>>(
+        &self,
+        dir: P,
+    ) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let dir_pattern = format!("{}/%", dir.as_ref().to_string_lossy());
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT path, date, size, checksum FROM snapshots
              WHERE path LIKE ? OR path = ?
-             ORDER BY path, date DESC"
+             ORDER BY path, date DESC",
         )?;
 
         let snapshot_iter = stmt.query_map(
@@ -72,7 +102,7 @@ impl Database {
                     row.get::<_, i64>(2)?,
                     row.get::<_, String>(3)?,
                 ))
-            }
+            },
         )?;
 
         let mut snapshots = Vec::new();
@@ -84,19 +114,12 @@ impl Database {
 
     pub fn clear_snapshots<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path_str = path.as_ref().to_string_lossy().to_string();
-        let count = self.conn.execute(
-            "DELETE FROM snapshots WHERE path = ?",
-            params![path_str],
-        )?;
+        let deleted = self
+            .conn
+            .execute("DELETE FROM snapshots WHERE path = ?", params![path_str])?;
 
-        if count == 0 {
-            println!("{}", style("No snapshots found for this path.").yellow());
-        } else {
-            println!("{} {} {}",
-                     style("Cleared").green(),
-                     style(count).cyan(),
-                     style(if count == 1 { "snapshot" } else { "snapshots" }).green()
-            );
+        if deleted > 0 {
+            self.cleanup_orphaned_files()?; // Nettoyage ajouté ici
         }
         Ok(())
     }
@@ -105,15 +128,15 @@ impl Database {
             .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
             .join(".freeze");
         std::fs::create_dir_all(&data_dir)?;
-        
+
         let db_path = data_dir.join("data.sql");
         let conn = Connection::open(db_path)?;
-        
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS snapshots (
                 id INTEGER PRIMARY KEY,
                 path TEXT NOT NULL,
-                content BLOB NOT NULL,
+                content_path TEXT NOT NULL,
                 checksum TEXT NOT NULL,
                 date TEXT NOT NULL,
                 size INTEGER NOT NULL
@@ -135,10 +158,10 @@ impl Database {
 
     pub fn save_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO snapshots (path, content, checksum, date, size) VALUES (?1, ?2, ?3, ?4, ?5)",
+            "INSERT INTO snapshots (path, content_path, checksum, date, size) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
-                snapshot.path.to_string_lossy().to_string(),
-                snapshot.content,
+                snapshot.path.to_string_lossy(),
+                snapshot.content_path.to_string_lossy(),
                 snapshot.checksum,
                 snapshot.date,
                 snapshot.size,
@@ -150,13 +173,13 @@ impl Database {
     pub fn get_snapshots_for_path<P: AsRef<Path>>(&self, path: P) -> Result<Vec<Snapshot>> {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let mut stmt = self.conn.prepare(
-            "SELECT path, content, checksum, date, size FROM snapshots WHERE path = ? ORDER BY date DESC"
+            "SELECT path, content_path, checksum, date, size FROM snapshots WHERE path = ? ORDER BY date DESC"
         )?;
 
         let snapshot_iter = stmt.query_map(params![path_str], |row| {
             Ok(Snapshot {
                 path: PathBuf::from(row.get::<_, String>(0)?),
-                content: row.get(1)?,
+                content_path: PathBuf::from(row.get::<_, String>(1)?),
                 checksum: row.get(2)?,
                 date: row.get(3)?,
                 size: row.get(4)?,
@@ -172,7 +195,7 @@ impl Database {
 
     pub fn list_all_snapshots(&self) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT path, date, size, checksum FROM snapshots ORDER BY date DESC"
+            "SELECT DISTINCT path, date, size, checksum FROM snapshots ORDER BY date DESC",
         )?;
 
         let snapshot_iter = stmt.query_map([], |row| {
@@ -191,9 +214,10 @@ impl Database {
         Ok(snapshots)
     }
 
-    pub fn list_current_directory_snapshots<P: AsRef<Path>>(&self, current_dir: P)
-                                                            -> Result<Vec<(PathBuf, String, i64, String)>>
-    {
+    pub fn list_current_directory_snapshots<P: AsRef<Path>>(
+        &self,
+        current_dir: P,
+    ) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let path_pattern = format!("{}/%", current_dir.as_ref().to_string_lossy());
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT path, date, size, checksum FROM snapshots WHERE path LIKE ? ORDER BY date DESC"
@@ -215,11 +239,11 @@ impl Database {
         Ok(snapshots)
     }
 
-
-
-
     pub fn clear_all_snapshots(&self) -> Result<()> {
-        self.conn.execute("DELETE FROM snapshots", [])?;
+        let count = self.conn.execute("DELETE FROM snapshots", [])?;
+        if count > 0 {
+            self.cleanup_orphaned_files()?;
+        }
         Ok(())
     }
 
@@ -232,23 +256,18 @@ impl Database {
     }
 
     pub fn remove_exclusion(&self, pattern: &str) -> Result<()> {
-        self.conn.execute(
-            "DELETE FROM exclusions WHERE pattern = ?",
-            params![pattern],
-        )?;
+        self.conn
+            .execute("DELETE FROM exclusions WHERE pattern = ?", params![pattern])?;
         Ok(())
     }
 
     pub fn list_exclusions(&self) -> Result<Vec<(String, String)>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT pattern, type FROM exclusions ORDER BY type, pattern"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT pattern, type FROM exclusions ORDER BY type, pattern")?;
 
         let exclusion_iter = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-            ))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
 
         let mut exclusions = Vec::new();
@@ -262,4 +281,3 @@ impl Database {
         self.list_exclusions()
     }
 }
-

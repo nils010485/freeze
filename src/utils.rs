@@ -90,6 +90,73 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
     println!("{}", table);
 }
 
+pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)], page: Option<u32>) {
+    const ITEMS_PER_PAGE: usize = 10;
+    
+    let total_snapshots = snapshots.len();
+    
+    // Si pas de page spécifiée, afficher tous les snapshots (comportement par défaut)
+    if page.is_none() {
+        print_snapshot_info(snapshots);
+        return;
+    }
+    
+    let total_pages = (total_snapshots + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+    let page_num = page.unwrap() as usize;
+    
+    if page_num == 0 || page_num > total_pages {
+        println!(
+            "{}",
+            style(format!("Invalid page number. Must be between 1 and {}.", total_pages)).red()
+        );
+        return;
+    }
+    
+    let start_index = (page_num - 1) * ITEMS_PER_PAGE;
+    let end_index = std::cmp::min(start_index + ITEMS_PER_PAGE, total_snapshots);
+    
+    let page_snapshots = &snapshots[start_index..end_index];
+    
+    let snapshot_displays: Vec<SnapshotDisplay> = page_snapshots
+        .iter()
+        .map(|(path, date, size, checksum)| SnapshotDisplay {
+            path: path.display().to_string(),
+            date: date.to_string(),
+            size: format_size(*size),
+            checksum: checksum[..8].to_string(),
+        })
+        .collect();
+
+    let table = Table::new(snapshot_displays)
+        .with(Style::modern())
+        .to_string();
+
+    println!("{}", table);
+    
+    // Afficher les informations de pagination
+    println!("{}", style("─".repeat(50)).dim());
+    println!(
+        "{} {} {} {} {}",
+        style("Page:").cyan(),
+        style(page_num).yellow(),
+        style("of").cyan(),
+        style(total_pages).yellow(),
+        style(format!("({} items)", total_snapshots)).dim()
+    );
+    
+    if total_pages > 1 {
+        let navigation = if page_num == 1 {
+            format!("Next: --page {}", page_num + 1)
+        } else if page_num == total_pages {
+            format!("Previous: --page {}", page_num - 1)
+        } else {
+            format!("Previous: --page {} | Next: --page {}", page_num - 1, page_num + 1)
+        };
+        
+        println!("{}", style(navigation).dim());
+    }
+}
+
 
 pub fn create_progress_bar(len: u64) -> ProgressBar {
     let pb = ProgressBar::new(len);
