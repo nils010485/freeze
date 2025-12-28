@@ -1,4 +1,10 @@
-// db.rs
+/*!
+Database operations for the freeze application.
+
+This module provides the `Database` struct which handles all SQLite database
+operations including snapshot persistence, retrieval, and exclusion management.
+*/
+
 use crate::snapshot::Snapshot;
 use anyhow::Result;
 use console::style;
@@ -6,14 +12,26 @@ use rusqlite::{params, Connection};
 use std::fs;
 use std::path::{Path, PathBuf};
 
+/// Database connection wrapper for freeze snapshot storage.
+///
+/// Handles all persistence operations for snapshots and exclusions using SQLite.
 pub struct Database {
     conn: Connection,
 }
 
 impl Database {
+    /// Clears all snapshots for a specific directory and its subdirectories.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - The directory path to clear snapshots for
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub fn clear_directory_snapshots<P: AsRef<Path>>(&self, dir: P) -> Result<()> {
         let dir_pattern = format!("{}/%", dir.as_ref().to_string_lossy());
-        let dir_path = dir.as_ref().to_string_lossy().to_string();
+        let dir_path = dir.as_ref().display().to_string();
 
         let count = self.conn.execute(
             "DELETE FROM snapshots WHERE path LIKE ? OR path = ?",
@@ -36,6 +54,13 @@ impl Database {
         }
         Ok(())
     }
+    /// Removes storage files that are no longer referenced by any snapshot.
+    ///
+    /// This is a private method used internally to clean up unused storage files.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading the storage directory or removing files fails.
     fn cleanup_orphaned_files(&self) -> Result<()> {
         let mut stmt = self
             .conn
@@ -46,18 +71,31 @@ impl Database {
             .collect::<Result<_, _>>()?;
 
         let storage_dir = dirs::home_dir()
-            .expect("Home directory")
+            .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
             .join(".freeze/storage");
 
         for entry in fs::read_dir(storage_dir)? {
             let entry = entry?;
             let path = entry.path();
-            if !used_files.contains(&path.to_string_lossy().to_string()) {
+            if !used_files.contains(&path.display().to_string()) {
                 fs::remove_file(path)?;
             }
         }
         Ok(())
     }
+    /// Searches for snapshots by path pattern.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - The search pattern to match against snapshot paths
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (path, date, size, checksum) for matching snapshots
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn search_snapshots(&self, pattern: &str) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let search_pattern = format!("%{}%", pattern);
         let mut stmt = self.conn.prepare(
@@ -82,6 +120,19 @@ impl Database {
         }
         Ok(snapshots)
     }
+    /// Lists all snapshots within a specific directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - The directory path to list snapshots for
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (path, date, size, checksum) for snapshots in the directory
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn list_directory_snapshots<P: AsRef<Path>>(
         &self,
         dir: P,
@@ -94,7 +145,7 @@ impl Database {
         )?;
 
         let snapshot_iter = stmt.query_map(
-            params![dir_pattern, dir.as_ref().to_string_lossy().to_string()],
+            params![dir_pattern, dir.as_ref().display().to_string()],
             |row| {
                 Ok((
                     PathBuf::from(row.get::<_, String>(0)?),
@@ -112,8 +163,17 @@ impl Database {
         Ok(snapshots)
     }
 
+    /// Clears all snapshots for a specific path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path to clear snapshots for
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub fn clear_snapshots<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_str = path.as_ref().to_string_lossy().to_string();
+        let path_str = path.as_ref().display().to_string();
         let deleted = self
             .conn
             .execute("DELETE FROM snapshots WHERE path = ?", params![path_str])?;
@@ -123,6 +183,19 @@ impl Database {
         }
         Ok(())
     }
+    /// Creates a new database connection and initializes the schema.
+    ///
+    /// # Returns
+    ///
+    /// A new `Database` instance with initialized schema
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The home directory cannot be determined
+    /// - The data directory cannot be created
+    /// - The database cannot be opened
+    /// - The schema cannot be initialized
     pub fn new() -> Result<Self> {
         let data_dir = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
@@ -156,6 +229,15 @@ impl Database {
         Ok(Database { conn })
     }
 
+    /// Saves a snapshot to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `snapshot` - Reference to the snapshot to save
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database insert operation fails.
     pub fn save_snapshot(&self, snapshot: &Snapshot) -> Result<()> {
         self.conn.execute(
             "INSERT INTO snapshots (path, content_path, checksum, date, size) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -170,8 +252,21 @@ impl Database {
         Ok(())
     }
 
+    /// Retrieves all snapshots for a specific path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The file path to retrieve snapshots for
+    ///
+    /// # Returns
+    ///
+    /// A vector of `Snapshot` instances for the given path, ordered by date descending
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn get_snapshots_for_path<P: AsRef<Path>>(&self, path: P) -> Result<Vec<Snapshot>> {
-        let path_str = path.as_ref().to_string_lossy().to_string();
+        let path_str = path.as_ref().display().to_string();
         let mut stmt = self.conn.prepare(
             "SELECT path, content_path, checksum, date, size FROM snapshots WHERE path = ? ORDER BY date DESC"
         )?;
@@ -193,6 +288,15 @@ impl Database {
         Ok(snapshots)
     }
 
+    /// Lists all snapshots in the database.
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (path, date, size, checksum) for all snapshots
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn list_all_snapshots(&self) -> Result<Vec<(PathBuf, String, i64, String)>> {
         let mut stmt = self.conn.prepare(
             "SELECT DISTINCT path, date, size, checksum FROM snapshots ORDER BY date DESC",
@@ -214,6 +318,19 @@ impl Database {
         Ok(snapshots)
     }
 
+    /// Lists all snapshots in the current working directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `current_dir` - The current directory path
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (path, date, size, checksum) for snapshots
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn list_current_directory_snapshots<P: AsRef<Path>>(
         &self,
         current_dir: P,
@@ -239,6 +356,11 @@ impl Database {
         Ok(snapshots)
     }
 
+    /// Clears all snapshots from the database.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database operation fails.
     pub fn clear_all_snapshots(&self) -> Result<()> {
         let count = self.conn.execute("DELETE FROM snapshots", [])?;
         if count > 0 {
@@ -247,6 +369,16 @@ impl Database {
         Ok(())
     }
 
+    /// Adds an exclusion pattern to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - The pattern to exclude (e.g., ".git", "node_modules")
+    /// * `exclusion_type` - The type of exclusion ("directory", "extension", or "file")
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database insert operation fails.
     pub fn add_exclusion(&self, pattern: &str, exclusion_type: &str) -> Result<()> {
         self.conn.execute(
             "INSERT INTO exclusions (pattern, type) VALUES (?1, ?2)",
@@ -255,12 +387,30 @@ impl Database {
         Ok(())
     }
 
+    /// Removes an exclusion pattern from the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `pattern` - The pattern to remove
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database delete operation fails.
     pub fn remove_exclusion(&self, pattern: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM exclusions WHERE pattern = ?", params![pattern])?;
         Ok(())
     }
 
+    /// Lists all exclusion patterns.
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (pattern, exclusion_type)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn list_exclusions(&self) -> Result<Vec<(String, String)>> {
         let mut stmt = self
             .conn
@@ -277,6 +427,15 @@ impl Database {
         Ok(exclusions)
     }
 
+    /// Gets all exclusion patterns (alias for list_exclusions).
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing (pattern, exclusion_type)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
     pub fn get_exclusions(&self) -> Result<Vec<(String, String)>> {
         self.list_exclusions()
     }

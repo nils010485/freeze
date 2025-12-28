@@ -1,4 +1,10 @@
-// snapshot.rs
+/*!
+Snapshot management for the freeze application.
+
+This module provides the `Snapshot` struct which represents a file snapshot
+with associated metadata and methods for creating, restoring, and managing snapshots.
+*/
+
 use crate::db::Database;
 use anyhow::{Context, Result};
 use chrono::Local;
@@ -10,17 +16,44 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 use zstd::stream::{encode_all, decode_all};
 
+/// Represents a file snapshot with metadata.
+///
+/// Contains information about a snapshot including the original path, storage location,
+/// checksum for integrity verification, timestamp, and file size.
 #[derive(Debug)]
 pub struct Snapshot {
+    /// Original path of the snapshotted file
     pub path: PathBuf,
+    /// Path where the compressed content is stored
     pub content_path: PathBuf,
+    /// SHA256 checksum of the original file
     pub checksum: String,
+    /// RFC3339 timestamp when the snapshot was created
     pub date: String,
+    /// Size of the original file in bytes
     pub size: i64,
 }
 
 impl Snapshot {
-    /// Create a new snapshot for a file
+    /// Creates a new snapshot for a file.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file to snapshot
+    ///
+    /// # Returns
+    ///
+    /// A new `Snapshot` instance with calculated checksum and compressed content
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The path cannot be canonicalized
+    /// - The path is not a file
+    /// - The file cannot be read
+    /// - The checksum cannot be calculated
+    /// - The storage directory cannot be created
+    /// - The file cannot be compressed
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path
             .as_ref()
@@ -59,7 +92,19 @@ impl Snapshot {
         })
     }
 
-    /// Save a file or directory recursively
+    /// Saves a file or directory recursively to the database.
+    ///
+    /// For directories, walks through all files and creates snapshots for each one,
+    /// excluding files matching exclusion patterns.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file or directory to save
+    /// * `db` - Database connection to store snapshots in
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any file operation or database save fails.
     pub fn save_recursive<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
         let path = path.as_ref();
 
@@ -86,14 +131,38 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Save a single file to the database
+    /// Saves a single file to the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file
+    /// * `db` - Database connection
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if snapshot creation or database save fails.
     fn save_file<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
         let snapshot = Self::new(path)?;
         db.save_snapshot(&snapshot)?;
         Ok(())
     }
 
-    /// Restore a file or directory from snapshots
+    /// Restores a file or directory from snapshots.
+    ///
+    /// For directories, restores all files that have snapshots.
+    /// If multiple snapshots exist for a file, prompts the user to select one.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to restore
+    /// * `db` - Database connection to retrieve snapshots from
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - No snapshots are found for the path
+    /// - File decompression fails
+    /// - File writing fails
     pub fn restore<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
         let path = path.as_ref();
 
@@ -121,7 +190,16 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Restore a single file from snapshot
+    /// Restores a single file from snapshot.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to restore
+    /// * `db` - Database connection
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no snapshots are found or restoration fails.
     fn restore_single<P: AsRef<Path>>(path: P, db: &Database) -> Result<()> {
         let path = path.as_ref();
         let snapshots = db.get_snapshots_for_path(path)?;
@@ -162,7 +240,18 @@ impl Snapshot {
         Self::restore_snapshot(&snapshots[selection - 1], path)
     }
 
-    /// Perform the actual file restoration
+    /// Performs the actual file restoration from a snapshot.
+    ///
+    /// Handles both compressed (.zstd) and legacy uncompressed snapshots.
+    ///
+    /// # Arguments
+    ///
+    /// * `snapshot` - The snapshot to restore from
+    /// * `path` - Destination path for restoration
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if decompression or file writing fails.
     fn restore_snapshot(snapshot: &Snapshot, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -178,7 +267,15 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Check if a path should be excluded
+    /// Checks if a path should be excluded based on exclusion patterns.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the path matches an exclusion pattern, `false` otherwise
     pub fn is_excluded(path: &Path) -> bool {
         let db = match Database::new() {
             Ok(db) => db,
@@ -217,7 +314,21 @@ impl Snapshot {
         false
     }
 
-    /// Calculate SHA256 checksum of a file in chunks
+    /// Calculates the SHA256 checksum of a file in chunks.
+    ///
+    /// Uses a 64KB buffer to avoid loading large files entirely into memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the file
+    ///
+    /// # Returns
+    ///
+    /// Hexadecimal string representation of the SHA256 checksum
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be opened or read.
     fn calculate_checksum<P: AsRef<Path>>(path: P) -> Result<String> {
         let mut file = fs::File::open(path)?;
         let mut hasher = Sha256::new();
@@ -234,7 +345,15 @@ impl Snapshot {
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    /// Get the storage directory path
+    /// Gets the storage directory path for compressed files.
+    ///
+    /// # Returns
+    ///
+    /// Path to `~/.freeze/storage`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the home directory cannot be determined.
     fn get_storage_dir() -> Result<PathBuf> {
         let data_dir = dirs::home_dir()
             .ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?
@@ -242,7 +361,14 @@ impl Snapshot {
         Ok(data_dir)
     }
 
-    /// Clean up any orphaned temporary files
+    /// Cleans up any orphaned temporary files from the storage directory.
+    ///
+    /// Removes all `.tmp` files that may have been left from interrupted operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage directory cannot be read.
+    /// Individual file removal failures are logged but don't cause an error.
     pub fn cleanup_temp_files() -> Result<()> {
         let storage_dir = Self::get_storage_dir()?;
         if !storage_dir.exists() {
@@ -262,7 +388,19 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Compress and copy file with temp file
+    /// Compresses a file and copies it to storage using a temporary file.
+    ///
+    /// Uses zstd compression level 3. Writes to a temporary file first,
+    /// then atomically renames to ensure data integrity.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Source file path
+    /// * `dest` - Destination path for the compressed file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading, compression, or writing fails.
     fn compress_and_copy<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
         let src = src.as_ref();
         let dest = dest.as_ref();
@@ -292,7 +430,19 @@ impl Snapshot {
         Ok(())
     }
 
-    /// Decompress and copy file with temp file
+    /// Decompresses a file and copies it to the destination using a temporary file.
+    ///
+    /// Reads a zstd-compressed file, decompresses it, and writes to a temporary
+    /// file first, then atomically renames to ensure data integrity.
+    ///
+    /// # Arguments
+    ///
+    /// * `src` - Compressed source file path
+    /// * `dest` - Destination path for the decompressed file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading, decompression, or writing fails.
     fn decompress_and_copy<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dest: Q) -> Result<()> {
         let src = src.as_ref();
         let dest = dest.as_ref();

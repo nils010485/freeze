@@ -1,3 +1,10 @@
+/*!
+Utility functions and UI components for the freeze application.
+
+This module provides helper functions for formatting, validation,
+and user interface elements like progress bars and tables.
+*/
+
 use crate::db::Database;
 use crate::snapshot::Snapshot;
 use anyhow::Result;
@@ -25,6 +32,22 @@ struct SnapshotDisplay {
     checksum: String,
 }
 
+/// Allows the user to interactively select a snapshot from a list.
+///
+/// If there's only one snapshot, returns it immediately.
+/// If there are multiple, displays them and prompts for selection.
+///
+/// # Arguments
+///
+/// * `snapshots` - Slice of available snapshots
+///
+/// # Returns
+///
+/// Reference to the selected snapshot
+///
+/// # Errors
+///
+/// Returns an error if no snapshots are available or if user input is invalid.
 pub fn select_snapshot(snapshots: &[Snapshot]) -> Result<&Snapshot> {
     if snapshots.is_empty() {
         anyhow::bail!("No snapshots available");
@@ -62,7 +85,13 @@ pub fn select_snapshot(snapshots: &[Snapshot]) -> Result<&Snapshot> {
     Ok(&snapshots[selection - 1])
 }
 
-
+/// Prints a formatted header with the given text.
+///
+/// Displays a stylized header with horizontal lines matching the terminal width.
+///
+/// # Arguments
+///
+/// * `text` - The header text to display
 pub fn print_header(text: &str) {
     let term = Term::stdout();
     let (_, width) = term.size();
@@ -72,6 +101,14 @@ pub fn print_header(text: &str) {
     println!("{}\n", "═".repeat(width).bright_blue());
 }
 
+/// Prints snapshot information in a table format.
+///
+/// Displays all snapshots with their path, date, size, and checksum
+/// in a formatted table.
+///
+/// # Arguments
+///
+/// * `snapshots` - Slice of tuples containing (path, date, size, checksum)
 pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
     let snapshot_displays: Vec<SnapshotDisplay> = snapshots
         .iter()
@@ -90,6 +127,15 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
     println!("{}", table);
 }
 
+/// Prints snapshot information with pagination support.
+///
+/// Displays snapshots in pages of 10 items. If no page is specified,
+/// displays all snapshots. Shows navigation hints for multiple pages.
+///
+/// # Arguments
+///
+/// * `snapshots` - Slice of tuples containing (path, date, size, checksum)
+/// * `page` - Optional page number (1-indexed, 10 items per page)
 pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)], page: Option<u32>) {
     const ITEMS_PER_PAGE: usize = 10;
     
@@ -157,7 +203,15 @@ pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)
     }
 }
 
-
+/// Creates a styled progress bar.
+///
+/// # Arguments
+///
+/// * `len` - Maximum value of the progress bar
+///
+/// # Returns
+///
+/// A configured progress bar with gradient styling and steady tick
 pub fn create_progress_bar(len: u64) -> ProgressBar {
     let pb = ProgressBar::new(len);
     pb.set_style(
@@ -170,6 +224,15 @@ pub fn create_progress_bar(len: u64) -> ProgressBar {
     pb
 }
 
+/// Formats a byte count into a human-readable size string.
+///
+/// # Arguments
+///
+/// * `size` - Size in bytes
+///
+/// # Returns
+///
+/// Formatted string with appropriate unit (B, KB, MB, or GB)
 pub fn format_size(size: i64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
@@ -187,10 +250,30 @@ pub fn format_size(size: i64) -> String {
     }
 }
 
+/// Detects if content contains binary data.
+///
+/// Checks the first 512 bytes for null bytes, which indicates binary content.
+///
+/// # Arguments
+///
+/// * `content` - Byte slice to check
+///
+/// # Returns
+///
+/// `true` if null bytes are found, `false` otherwise
 pub fn is_binary(content: &[u8]) -> bool {
     content.iter().take(512).any(|&byte| byte == 0)
 }
 
+/// Validates that a path exists.
+///
+/// # Arguments
+///
+/// * `path` - Path to validate
+///
+/// # Errors
+///
+/// Returns an error if the path does not exist.
 pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<()> {
     let path = path.as_ref();
     if !path.exists() {
@@ -199,6 +282,19 @@ pub fn validate_path<P: AsRef<Path>>(path: P) -> Result<()> {
     Ok(())
 }
 
+/// Checks if files have changed since their last snapshot.
+///
+/// For files, compares the current checksum with the stored one.
+/// For directories, checks all files within.
+///
+/// # Arguments
+///
+/// * `path` - Path to check
+/// * `db` - Database connection to retrieve snapshots from
+///
+/// # Errors
+///
+/// Returns an error if path canonicalization or file operations fail.
 pub fn check_path(path: &str, db: &Database) -> Result<()> {
     let path = PathBuf::from(path).canonicalize()?;
 
@@ -256,7 +352,7 @@ fn check_directory(dir: &Path, db: &Database) -> Result<()> {
     let all_snapshots = db.list_directory_snapshots(dir)?;
     let snapshot_map: HashMap<String, String> = all_snapshots
         .into_iter()
-        .map(|(path, _, _, checksum)| (path.to_string_lossy().to_string(), checksum))
+        .map(|(path, _, _, checksum)| (path.display().to_string(), checksum))
         .collect();
 
     let mut files_checked = 0;
@@ -275,7 +371,7 @@ fn check_directory(dir: &Path, db: &Database) -> Result<()> {
             hasher.update(&content);
             let current_checksum = format!("{:x}", hasher.finalize());
 
-            let path_str = path.to_string_lossy().to_string();
+            let path_str = path.display().to_string();
             match snapshot_map.get(&path_str) {
                 Some(saved_checksum) => {
                     files_checked += 1;
@@ -310,4 +406,52 @@ fn check_directory(dir: &Path, db: &Database) -> Result<()> {
     println!("New files: {}", style(files_new).red());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_size_bytes() {
+        assert_eq!(format_size(0), "0 B");
+        assert_eq!(format_size(512), "512 B");
+        assert_eq!(format_size(1023), "1023 B");
+    }
+
+    #[test]
+    fn test_format_size_kb() {
+        let result = format_size(2048);
+        assert!(result.contains("KB"));
+    }
+
+    #[test]
+    fn test_format_size_mb() {
+        let result = format_size(2_000_000);
+        assert!(result.contains("MB"));
+    }
+
+    #[test]
+    fn test_format_size_gb() {
+        let result = format_size(2_000_000_000);
+        assert!(result.contains("GB"));
+    }
+
+    #[test]
+    fn test_is_binary_with_text() {
+        let content = b"Hello, world!";
+        assert!(!is_binary(content));
+    }
+
+    #[test]
+    fn test_is_binary_with_binary() {
+        let content = b"Hello\0world";
+        assert!(is_binary(content));
+    }
+
+    #[test]
+    fn test_is_binary_empty() {
+        let content = b"";
+        assert!(!is_binary(content));
+    }
 }
