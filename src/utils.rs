@@ -17,15 +17,16 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tabled::settings::{Style, Width};
+use tabled::settings::{object::Columns, Modify, Style, Width};
 use tabled::{Table, Tabled};
 use walkdir::WalkDir;
+
 #[derive(Tabled)]
 struct SnapshotDisplay {
-    #[tabled(rename = "Path")]
-    path: String,
     #[tabled(rename = "Date")]
     date: String,
+    #[tabled(rename = "Path")]
+    path: String,
     #[tabled(rename = "Size")]
     size: String,
     #[tabled(rename = "Checksum")]
@@ -62,7 +63,7 @@ pub fn select_snapshot(snapshots: &[Snapshot]) -> Result<&Snapshot> {
         println!(
             "{}. {} ({}) - Checksum: {}",
             i + 1,
-            snapshot.date,
+            format_date(&snapshot.date),
             format_size(snapshot.size),
             &snapshot.checksum[..8]
         );
@@ -113,10 +114,10 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
     let snapshot_displays: Vec<SnapshotDisplay> = snapshots
         .iter()
         .map(|(path, date, size, checksum)| SnapshotDisplay {
+            date: format_date(date),
             path: path.display().to_string(),
-            date: date.to_string(),
             size: format_size(*size),
-            checksum: checksum[..8].to_string(),
+            checksum: checksum.get(..8).unwrap_or(checksum).to_string(),
         })
         .collect();
 
@@ -126,7 +127,7 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
 
     let table = Table::new(snapshot_displays)
         .with(Style::rounded())
-        .with(Width::wrap(width))
+        .with(Modify::new(Columns::new(1..2)).with(Width::wrap(width.saturating_sub(50))))
         .to_string();
 
     println!("{}", table);
@@ -177,10 +178,10 @@ pub fn print_snapshot_info_paginated(
     let snapshot_displays: Vec<SnapshotDisplay> = page_snapshots
         .iter()
         .map(|(path, date, size, checksum)| SnapshotDisplay {
+            date: format_date(date),
             path: path.display().to_string(),
-            date: date.to_string(),
             size: format_size(*size),
-            checksum: checksum[..8].to_string(),
+            checksum: checksum.get(..8).unwrap_or(checksum).to_string(),
         })
         .collect();
 
@@ -190,7 +191,7 @@ pub fn print_snapshot_info_paginated(
 
     let table = Table::new(snapshot_displays)
         .with(Style::rounded())
-        .with(Width::wrap(width))
+        .with(Modify::new(Columns::new(1..2)).with(Width::wrap(width.saturating_sub(50))))
         .to_string();
 
     println!("{}", table);
@@ -266,6 +267,23 @@ pub fn format_size(size: i64) -> String {
         format!("{:.2} KB", size / KB)
     } else {
         format!("{:.0} B", size)
+    }
+}
+
+/// Formats an RFC3339 date string into a more readable format.
+///
+/// # Arguments
+///
+/// * `date` - RFC3339 date string
+///
+/// # Returns
+///
+/// Formatted date string (YYYY-MM-DD HH:MM)
+pub fn format_date(date: &str) -> String {
+    if date.len() >= 16 {
+        date[..16].replace('T', " ")
+    } else {
+        date.to_string()
     }
 }
 

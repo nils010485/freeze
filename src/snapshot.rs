@@ -216,7 +216,7 @@ impl Snapshot {
             println!(
                 "{}. {} ({}) - Checksum: {}",
                 i + 1,
-                snapshot.date,
+                crate::utils::format_date(&snapshot.date),
                 crate::utils::format_size(snapshot.size),
                 &snapshot.checksum[..8]
             );
