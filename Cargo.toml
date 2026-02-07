@@ -4,15 +4,40 @@ version = "0.1.1"
 edition = "2024"
 
 [dependencies]
-rusqlite = { version = "0.29", features = ["bundled", "blob"] }
+rusqlite = { version = "0.38", features = ["bundled", "blob"] }
 sha2 = "0.10"
-clap = { version = "4.3", features = ["derive"] }
-indicatif = "0.17"
-walkdir = "2.3"
+clap = { version = "4.5", features = ["derive"] }
+indicatif = "0.18"
+walkdir = "2.5"
 chrono = "0.4"
-dirs = "5.0"
+dirs = "6.0"
 anyhow = "1.0"
-console = "0.15"
-tabled = "0.16.0"
-colored = "2.1.0"
+console = "0.16"
+tabled = "0.20"
+colored = "2.1"
 zstd = "0.13"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+
+# Web interface
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+hyper = { version = "1.0", features = ["full"] }
+open = "5"
+similar = { version = "2.7", features = ["inline"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = [
+    "Window", "Document", "Element", "HtmlElement",
+    "Event", "KeyboardEvent", "MouseEvent",
+] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+
+[dev-dependencies]
+tempfile = "3.24"

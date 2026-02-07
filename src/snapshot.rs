@@ -14,7 +14,6 @@ use std::fs;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
-use zstd::stream::{encode_all, decode_all};
 
 /// Represents a file snapshot with metadata.
 ///
@@ -256,7 +255,7 @@ impl Snapshot {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        
+
         // Check if the file is compressed (has .zstd extension)
         if snapshot.content_path.extension().and_then(|s| s.to_str()) == Some("zstd") {
             Self::decompress_and_copy(&snapshot.content_path, path)?;
@@ -295,17 +294,17 @@ impl Snapshot {
                     }
                 }
                 "extension" => {
-                    if let Some(ext) = path.extension() {
-                        if ext.to_string_lossy() == pattern.trim_start_matches('.') {
-                            return true;
-                        }
+                    if let Some(ext) = path.extension()
+                        && ext.to_string_lossy() == pattern.trim_start_matches('.')
+                    {
+                        return true;
                     }
                 }
                 "file" => {
-                    if let Some(file_name) = path.file_name() {
-                        if file_name.to_string_lossy() == pattern {
-                            return true;
-                        }
+                    if let Some(file_name) = path.file_name()
+                        && file_name.to_string_lossy() == pattern
+                    {
+                        return true;
                     }
                 }
                 _ => continue,
@@ -378,11 +377,11 @@ impl Snapshot {
         for entry in fs::read_dir(&storage_dir)? {
             let entry = entry?;
             let path = entry.path();
-            
-            if path.extension().and_then(|s| s.to_str()) == Some("tmp") {
-                if let Err(e) = fs::remove_file(&path) {
-                    eprintln!("Warning: Failed to remove temp file {:?}: {}", path, e);
-                }
+
+            if path.extension().and_then(|s| s.to_str()) == Some("tmp")
+                && let Err(e) = fs::remove_file(&path)
+            {
+                eprintln!("Warning: Failed to remove temp file {:?}: {}", path, e);
             }
         }
         Ok(())
@@ -406,7 +405,7 @@ impl Snapshot {
         let dest = dest.as_ref();
 
         let temp_path = dest.with_extension("tmp");
-        
+
         // Ensure temp file is cleaned up on error
         struct TempFileGuard<'a>(&'a Path);
         impl<'a> Drop for TempFileGuard<'a> {
@@ -415,17 +414,16 @@ impl Snapshot {
             }
         }
         let _guard = TempFileGuard(&temp_path);
-        
-        // Read the source file
-        let file_data = fs::read(src)?;
-        
-        // Compress the data
-        let compressed_data = encode_all(&file_data[..], 3)?; // Compression level 3
-        
-        // Write compressed data to temp file
-        fs::write(&temp_path, compressed_data)?;
-        
-        // Atomic rename
+
+        let mut source_file = fs::File::open(src)?;
+
+        let dest_file = fs::File::create(&temp_path)?;
+        let mut writer = std::io::BufWriter::new(dest_file);
+
+        zstd::stream::copy_encode(&mut source_file, &mut writer, 3)?;
+
+        writer.flush()?;
+
         fs::rename(&temp_path, dest)?;
         Ok(())
     }
@@ -448,8 +446,7 @@ impl Snapshot {
         let dest = dest.as_ref();
 
         let temp_path = dest.with_extension("tmp");
-        
-        // Ensure temp file is cleaned up on error
+
         struct TempFileGuard<'a>(&'a Path);
         impl<'a> Drop for TempFileGuard<'a> {
             fn drop(&mut self) {
@@ -457,18 +454,63 @@ impl Snapshot {
             }
         }
         let _guard = TempFileGuard(&temp_path);
-        
-        // Read the compressed file
-        let compressed_data = fs::read(src)?;
-        
-        // Decompress the data
-        let decompressed_data = decode_all(&compressed_data[..])?;
-        
-        // Write decompressed data to temp file
-        fs::write(&temp_path, decompressed_data)?;
-        
-        // Atomic rename
+
+        let mut source_file = fs::File::open(src)?;
+        let dest_file = fs::File::create(&temp_path)?;
+        let mut writer = std::io::BufWriter::new(dest_file);
+
+        zstd::stream::copy_decode(&mut source_file, &mut writer)?;
+
+        writer.flush()?;
+
         fs::rename(&temp_path, dest)?;
         Ok(())
+    }
+
+    pub fn get_decompressed_content(&self) -> Result<Vec<u8>> {
+        let mut source_file = fs::File::open(&self.content_path)?;
+        let mut buffer = Vec::new();
+        zstd::stream::copy_decode(&mut source_file, &mut buffer)?;
+        Ok(buffer)
+    }
+
+    /// Reads the first `limit` bytes of decompressed content.
+    ///
+    /// # Arguments
+    ///
+    /// * `limit` - Maximum number of bytes to read
+    ///
+    /// # Returns
+    ///
+    /// A vector containing up to `limit` bytes of decompressed content.
+    pub fn peek_decompressed_content(&self, limit: usize) -> Result<Vec<u8>> {
+        let mut source_file = fs::File::open(&self.content_path)?;
+        let mut decoder = zstd::stream::Decoder::new(&mut source_file)?;
+        let mut buffer = vec![0; limit];
+        let mut bytes_read = 0;
+
+        while bytes_read < limit {
+            match decoder.read(&mut buffer[bytes_read..]) {
+                Ok(0) => break, // EOF
+                Ok(n) => bytes_read += n,
+                Err(e) => return Err(e.into()),
+            }
+        }
+
+        buffer.truncate(bytes_read);
+        Ok(buffer)
+    }
+
+    /// Exports the snapshot to a destination path using streaming.
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - Destination path
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if reading, decompression, or writing fails.
+    pub fn export(&self, dest: &Path) -> Result<()> {
+        Self::decompress_and_copy(&self.content_path, dest)
     }
 }

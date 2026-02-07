@@ -17,18 +17,18 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use tabled::settings::Style;
+use tabled::settings::{Style, Width};
 use tabled::{Table, Tabled};
 use walkdir::WalkDir;
 #[derive(Tabled)]
 struct SnapshotDisplay {
-    #[tabled(rename = "📁 Path")]
+    #[tabled(rename = "Path")]
     path: String,
-    #[tabled(rename = "📅 Date")]
+    #[tabled(rename = "Date")]
     date: String,
-    #[tabled(rename = "💾 Size")]
+    #[tabled(rename = "Size")]
     size: String,
-    #[tabled(rename = "🔐 Checksum")]
+    #[tabled(rename = "Checksum")]
     checksum: String,
 }
 
@@ -120,8 +120,13 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
         })
         .collect();
 
+    let term = Term::stdout();
+    let (_, width) = term.size();
+    let width = width as usize;
+
     let table = Table::new(snapshot_displays)
-        .with(Style::modern())
+        .with(Style::rounded())
+        .with(Width::wrap(width))
         .to_string();
 
     println!("{}", table);
@@ -136,33 +141,39 @@ pub fn print_snapshot_info(snapshots: &[(PathBuf, String, i64, String)]) {
 ///
 /// * `snapshots` - Slice of tuples containing (path, date, size, checksum)
 /// * `page` - Optional page number (1-indexed, 10 items per page)
-pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)], page: Option<u32>) {
+pub fn print_snapshot_info_paginated(
+    snapshots: &[(PathBuf, String, i64, String)],
+    page: Option<u32>,
+) {
     const ITEMS_PER_PAGE: usize = 10;
-    
+
     let total_snapshots = snapshots.len();
-    
-    // Si pas de page spécifiée, afficher tous les snapshots (comportement par défaut)
+
     if page.is_none() {
         print_snapshot_info(snapshots);
         return;
     }
-    
-    let total_pages = (total_snapshots + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE;
+
+    let total_pages = total_snapshots.div_ceil(ITEMS_PER_PAGE);
     let page_num = page.unwrap() as usize;
-    
+
     if page_num == 0 || page_num > total_pages {
         println!(
             "{}",
-            style(format!("Invalid page number. Must be between 1 and {}.", total_pages)).red()
+            style(format!(
+                "Invalid page number. Must be between 1 and {}.",
+                total_pages
+            ))
+            .red()
         );
         return;
     }
-    
+
     let start_index = (page_num - 1) * ITEMS_PER_PAGE;
     let end_index = std::cmp::min(start_index + ITEMS_PER_PAGE, total_snapshots);
-    
+
     let page_snapshots = &snapshots[start_index..end_index];
-    
+
     let snapshot_displays: Vec<SnapshotDisplay> = page_snapshots
         .iter()
         .map(|(path, date, size, checksum)| SnapshotDisplay {
@@ -173,14 +184,18 @@ pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)
         })
         .collect();
 
+    let term = Term::stdout();
+    let (_, width) = term.size();
+    let width = width as usize;
+
     let table = Table::new(snapshot_displays)
-        .with(Style::modern())
+        .with(Style::rounded())
+        .with(Width::wrap(width))
         .to_string();
 
     println!("{}", table);
-    
-    // Afficher les informations de pagination
-    println!("{}", style("─".repeat(50)).dim());
+
+    println!("{}", style("─".repeat(width.min(50))).dim());
     println!(
         "{} {} {} {} {}",
         style("Page:").cyan(),
@@ -189,16 +204,20 @@ pub fn print_snapshot_info_paginated(snapshots: &[(PathBuf, String, i64, String)
         style(total_pages).yellow(),
         style(format!("({} items)", total_snapshots)).dim()
     );
-    
+
     if total_pages > 1 {
         let navigation = if page_num == 1 {
             format!("Next: --page {}", page_num + 1)
         } else if page_num == total_pages {
             format!("Previous: --page {}", page_num - 1)
         } else {
-            format!("Previous: --page {} | Next: --page {}", page_num - 1, page_num + 1)
+            format!(
+                "Previous: --page {} | Next: --page {}",
+                page_num - 1,
+                page_num + 1
+            )
         };
-        
+
         println!("{}", style(navigation).dim());
     }
 }
@@ -345,8 +364,7 @@ fn check_single_file(path: &Path, db: &Database) -> Result<()> {
 fn check_directory(dir: &Path, db: &Database) -> Result<()> {
     let pb = ProgressBar::new_spinner();
     pb.set_style(
-        ProgressStyle::default_spinner()
-            .template("{spinner:.green} [{elapsed_precise}] {msg}")?,
+        ProgressStyle::default_spinner().template("{spinner:.green} [{elapsed_precise}] {msg}")?,
     );
 
     let all_snapshots = db.list_directory_snapshots(dir)?;
@@ -406,6 +424,271 @@ fn check_directory(dir: &Path, db: &Database) -> Result<()> {
     println!("New files: {}", style(files_new).red());
 
     Ok(())
+}
+
+fn is_checksum(s: &str) -> bool {
+    s.len() == 64 && s.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+pub fn compare(first: &str, second: &str, db: &Database) -> Result<()> {
+    let (left_content, left_name, left_is_binary) = resolve_content(first, second, db)?;
+    let (right_content, right_name, right_is_binary) = resolve_content(second, first, db)?;
+
+    if left_is_binary || right_is_binary {
+        print_binary_diff(&left_name, &right_name, &left_content, &right_content);
+        return Ok(());
+    }
+
+    let left_str = String::from_utf8_lossy(&left_content);
+    let right_str = String::from_utf8_lossy(&right_content);
+
+    let diff = compute_unified_diff(&left_name, &right_name, &left_str, &right_str);
+
+    if diff.is_empty() {
+        println!("{}", style("✅ Files are identical").green().bold());
+    } else {
+        print!("{}", diff);
+    }
+
+    Ok(())
+}
+
+/// Inspects the evolution of a file across snapshots.
+///
+/// Displays a timeline of changes including date, size, and diff stats.
+pub fn inspect_file(path: &Path, db: &Database) -> Result<()> {
+    let mut snapshots = db.get_snapshots_for_path(path)?;
+
+    if snapshots.is_empty() {
+        println!(
+            "{} {}",
+            style("No snapshots found for:").yellow(),
+            style(path.display()).cyan()
+        );
+        return Ok(());
+    }
+
+    // Sort by date ascending (oldest to newest)
+    snapshots.sort_by(|a, b| a.date.cmp(&b.date));
+
+    println!(
+        "{} {}",
+        style("Evolution of:").cyan().bold(),
+        style(path.display()).green()
+    );
+    println!("{}", style("─".repeat(50)).dim());
+
+    let mut prev_snapshot: Option<&Snapshot> = None;
+
+    for (i, snapshot) in snapshots.iter().enumerate() {
+        let size_formatted = format_size(snapshot.size);
+        let date_short = snapshot.date.split('T').next().unwrap_or(&snapshot.date);
+        let time_short = snapshot
+            .date
+            .split('T')
+            .nth(1)
+            .unwrap_or("")
+            .split('.')
+            .next()
+            .unwrap_or("");
+
+        let header = format!(
+            "{} {} {} {}",
+            style(format!("#{}", i + 1)).dim(),
+            style(format!("{} {}", date_short, time_short)).cyan(),
+            style(&snapshot.checksum[..8]).yellow(),
+            style(size_formatted).blue()
+        );
+
+        if let Some(prev) = prev_snapshot {
+            // Compare with previous
+            if prev.checksum == snapshot.checksum {
+                println!("{} {}", header, style("(No change)").dim());
+            } else {
+                // Calculate diff stats
+                let prev_content = prev.get_decompressed_content()?;
+                let curr_content = snapshot.get_decompressed_content()?;
+
+                if is_binary(&curr_content) || is_binary(&prev_content) {
+                    println!("{} {}", header, style("(Binary changed)").yellow());
+                } else {
+                    let prev_str = String::from_utf8_lossy(&prev_content);
+                    let curr_str_copy = String::from_utf8_lossy(&curr_content);
+
+                    let diff = TextDiff::from_lines(&prev_str, &curr_str_copy);
+                    let mut added = 0;
+                    let mut removed = 0;
+                    let mut diff_lines: Vec<String> = Vec::new();
+
+                    for change in diff.iter_all_changes() {
+                        match change.tag() {
+                            ChangeTag::Delete => {
+                                removed += 1;
+                                diff_lines.push(format!("  {}", style(change.to_string()).red()));
+                            }
+                            ChangeTag::Insert => {
+                                added += 1;
+                                diff_lines.push(format!("  {}", style(change.to_string()).green()));
+                            }
+                            ChangeTag::Equal => {
+                                diff_lines.push(format!("  {}", style(change.to_string()).dim()));
+                            }
+                        }
+                    }
+
+                    let mut stats = String::new();
+                    if added > 0 {
+                        stats.push_str(&format!("+{} ", added));
+                    }
+                    if removed > 0 {
+                        stats.push_str(&format!("-{} ", removed));
+                    }
+
+                    let stats_colored = if added > removed {
+                        style(stats).green()
+                    } else {
+                        style(stats).red()
+                    };
+
+                    println!("{} {}", header, stats_colored);
+
+                    let mut lines_printed = 0;
+                    const MAX_LINES: usize = 50;
+
+                    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+                        if lines_printed >= MAX_LINES {
+                            println!("{}", style("  ... (diff truncated)").dim());
+                            break;
+                        }
+
+                        if idx > 0 {
+                            println!("{}", style("  ...").dim());
+                        }
+
+                        for op in group {
+                            for change in diff.iter_inline_changes(op) {
+                                if lines_printed >= MAX_LINES {
+                                    break;
+                                }
+
+                                let (sign, s) = match change.tag() {
+                                    ChangeTag::Delete => ("-", style(change.to_string()).red()),
+                                    ChangeTag::Insert => ("+", style(change.to_string()).green()),
+                                    ChangeTag::Equal => (" ", style(change.to_string()).dim()),
+                                };
+                                print!("  {}{}", sign, s);
+                                lines_printed += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            // First snapshot
+            println!("{} {}", header, style("(Initial)").green());
+
+            if let Ok(content) = snapshot.peek_decompressed_content(1024)
+                && !is_binary(&content)
+                && let Ok(text) = String::from_utf8(content)
+            {
+                let lines: Vec<&str> = text.lines().take(5).collect();
+                for line in lines {
+                    println!("  {}", style(line).dim());
+                }
+                if text.lines().count() > 5 {
+                    println!("  {}", style("...").dim());
+                }
+            }
+        }
+
+        prev_snapshot = Some(snapshot);
+    }
+    println!("{}", style("─".repeat(50)).dim());
+
+    Ok(())
+}
+
+fn resolve_content(arg: &str, other_arg: &str, db: &Database) -> Result<(Vec<u8>, String, bool)> {
+    if is_checksum(arg) {
+        if let Some(snapshot) = db.get_snapshot_by_checksum(arg)? {
+            let content = snapshot.get_decompressed_content()?;
+            let is_bin = is_binary(&content);
+            return Ok((
+                content,
+                format!("snapshot:{}:{}", snapshot.path.display(), &arg[..8]),
+                is_bin,
+            ));
+        }
+        anyhow::bail!("Checksum not found: {}", &arg[..8]);
+    }
+
+    let path = PathBuf::from(arg);
+    if path.exists() {
+        let content = fs::read(&path)?;
+        let is_bin = is_binary(&content);
+        let name = if is_checksum(other_arg) {
+            format!("{}:{}", path.display(), &other_arg[..8])
+        } else {
+            path.display().to_string()
+        };
+        return Ok((content, name, is_bin));
+    }
+
+    anyhow::bail!("Path or checksum not found: {}", arg);
+}
+
+use similar::{ChangeTag, TextDiff};
+
+fn compute_unified_diff(old_name: &str, new_name: &str, old: &str, new: &str) -> String {
+    let mut result = String::new();
+
+    result.push_str(&style(format!("--- {}\n", old_name)).red().to_string());
+    result.push_str(&style(format!("+++ {}\n", new_name)).green().to_string());
+
+    let diff = TextDiff::from_lines(old, new);
+
+    for (idx, group) in diff.grouped_ops(3).iter().enumerate() {
+        if idx > 0 {
+            result.push_str(&style("@@ ... @@\n").yellow().bold().to_string());
+        }
+        for op in group {
+            for change in diff.iter_inline_changes(op) {
+                let (sign, s) = match change.tag() {
+                    ChangeTag::Delete => ("-", style(change.to_string()).red()),
+                    ChangeTag::Insert => ("+", style(change.to_string()).green()),
+                    ChangeTag::Equal => (" ", style(change.to_string()).dim()),
+                };
+                result.push_str(&format!("{}{}", sign, s));
+            }
+        }
+    }
+
+    result
+}
+
+fn print_binary_diff(left_name: &str, right_name: &str, left: &[u8], right: &[u8]) {
+    println!("{}", style("Binary files differ").yellow().bold());
+    println!("\n{}:", style(left_name).cyan());
+    println!("  Size: {}", format_size(left.len() as i64));
+    println!("\n{}:", style(right_name).cyan());
+    println!("  Size: {}", format_size(right.len() as i64));
+
+    if left.len() != right.len() {
+        let diff = (right.len() as i64) - (left.len() as i64);
+        if diff > 0 {
+            println!(
+                "\n{} +{} bytes",
+                style("Size difference:").yellow(),
+                style(format!("+{}", diff)).green()
+            );
+        } else {
+            println!(
+                "\n{} {} bytes",
+                style("Size difference:").yellow(),
+                style(diff).red()
+            );
+        }
+    }
 }
 
 #[cfg(test)]

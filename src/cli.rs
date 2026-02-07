@@ -8,7 +8,6 @@ use crate::utils::print_header;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use console::style;
-use std::io::Read;
 use std::path::Path;
 use std::path::PathBuf;
 use std::{env, fs};
@@ -81,6 +80,29 @@ pub enum Commands {
         /// Path to check
         path: String,
     },
+    /// Compare snapshots or files with snapshots
+    Diff {
+        /// First argument (checksum or path)
+        first: String,
+        /// Second argument (checksum or path)
+        second: String,
+    },
+    /// Inspect file evolution across snapshots
+    Inspect {
+        /// Path to inspect
+        path: String,
+    },
+    /// Start MCP server
+    Mcp,
+    /// Start the web interface
+    Web {
+        /// Port to listen on (default: 3000)
+        #[arg(short, long)]
+        port: Option<u16>,
+        /// Open browser automatically
+        #[arg(short, long)]
+        open: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -119,7 +141,7 @@ impl ExclusionType {
     }
 }
 
-pub fn run() -> Result<()> {
+pub async fn run() -> Result<()> {
     let cli = Cli::parse();
     let db = Database::new()?;
 
@@ -227,44 +249,29 @@ pub fn run() -> Result<()> {
             // If multiple snapshots, let user choose
             let snapshot = utils::select_snapshot(&snapshots)?;
 
-            // Check file size before loading
-            let metadata = fs::metadata(&snapshot.content_path)?;
-            let max_bytes = max_size * 1024 * 1024;
+            // Check file size before loading (use original size)
+            let max_bytes = (max_size * 1024 * 1024) as i64;
 
-            if metadata.len() > max_bytes {
+            if snapshot.size > max_bytes {
                 println!(
                     "{} {} ({} > {} MB limit)",
                     style("File too large to display:").yellow(),
                     style(snapshot_path.display()).cyan(),
-                    style(format_size(metadata.len() as i64)).yellow(),
+                    style(format_size(snapshot.size)).yellow(),
                     style(max_size).yellow()
                 );
                 println!("Snapshot details:");
                 println!("Path: {}", snapshot.path.display());
                 println!("Date: {}", snapshot.date);
-                println!("Size: {}", format_size(metadata.len() as i64));
+                println!("Size: {}", format_size(snapshot.size));
                 println!("Checksum: {}", snapshot.checksum);
                 return Ok(());
             }
 
-            // Read file content in chunks to check if binary
-            let mut file = fs::File::open(&snapshot.content_path)?;
-            let mut buffer = [0; 512];
-            let mut is_binary = false;
-            let mut content = Vec::new();
-
-            loop {
-                let bytes_read = file.read(&mut buffer)?;
-                if bytes_read == 0 {
-                    break;
-                }
-                if buffer[..bytes_read].iter().any(|&b| b == 0) {
-                    is_binary = true;
-                }
-                content.extend_from_slice(&buffer[..bytes_read]);
-            }
-
-            if is_binary {
+            // Decompress content
+            let content = snapshot.get_decompressed_content()?;
+            
+            if utils::is_binary(&content) {
                 println!(
                     "{} {}",
                     style("Binary content detected for:").yellow(),
@@ -273,7 +280,7 @@ pub fn run() -> Result<()> {
                 println!("Snapshot details:");
                 println!("Path: {}", snapshot.path.display());
                 println!("Date: {}", snapshot.date);
-                println!("Size: {}", format_size(metadata.len() as i64));
+                println!("Size: {}", format_size(snapshot.size));
                 println!("Checksum: {}", snapshot.checksum);
                 return Ok(());
             }
@@ -338,7 +345,7 @@ pub fn run() -> Result<()> {
                     }
                 }
             };
-            
+
             println!(
                 "{} {}",
                 style("Restoring:").cyan().bold(),
@@ -482,6 +489,33 @@ pub fn run() -> Result<()> {
                     }
                 }
             }
+            Ok(())
+        }
+
+        Commands::Mcp => {
+            print_header("🧊 Starting MCP Server");
+            println!("MCP server listening on stdin/stdout...");
+            println!("Press Ctrl+C to stop.");
+            crate::mcp::run_server().await?;
+            Ok(())
+        }
+
+        Commands::Diff { first, second } => {
+            print_header("📊 Comparing Snapshots");
+            utils::compare(&first, &second, &db)?;
+            Ok(())
+        }
+
+        Commands::Inspect { path } => {
+            print_header("🕵️  Inspecting Evolution");
+            let path = PathBuf::from(path).canonicalize()?;
+            utils::inspect_file(&path, &db)?;
+            Ok(())
+        }
+
+        Commands::Web { port, open } => {
+            let port = port.unwrap_or(3000);
+            crate::web::run_server(port, open).await?;
             Ok(())
         }
     }

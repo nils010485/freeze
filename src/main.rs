@@ -1,8 +1,10 @@
 // main.rs
 pub mod cli;
 pub mod db;
+pub mod mcp;
 pub mod snapshot;
 pub mod utils;
+pub mod web;
 
 use anyhow::Result;
 
@@ -12,5 +14,7 @@ fn main() -> Result<()> {
         eprintln!("Warning: Failed to cleanup temporary files: {}", e);
     }
     
-    cli::run()
+    tokio::runtime::Runtime::new()?.block_on(async {
+        cli::run().await
+    })
 }
